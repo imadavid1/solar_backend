@@ -56,7 +56,7 @@ def create_payment(payment: CreatePaymentRequest):
 
     payload = {
         "email": "customer@example.com",
-        "amount": int(payment.amount_paid * 100),
+        "callback_url": "https://imadavid1.github.io/solar_paygo_app/",
         "reference": reference,
         "callback_url": "http://127.0.0.1:5001",
         "metadata": {
