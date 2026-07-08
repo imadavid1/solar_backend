@@ -55,15 +55,16 @@ def create_payment(payment: CreatePaymentRequest):
     }
 
     payload = {
-        "email": "customer@example.com",
-        "callback_url": "https://imadavid1.github.io/solar_paygo_app/",
-        "reference": reference,
-        "callback_url": "http://127.0.0.1:5001",
-        "metadata": {
-            "device_id": payment.device_id,
-            "amount_paid": payment.amount_paid,
-        },
-    }
+    "email": "customer@example.com",
+    "amount": int(payment.amount_paid * 100),
+    "currency": "NGN",
+    "reference": reference,
+    "callback_url": "https://imadavid1.github.io/solar_paygo_app/",
+    "metadata": {
+        "device_id": payment.device_id,
+        "amount_paid": payment.amount_paid,
+    },
+}
 
     response = requests.post(
         "https://api.paystack.co/transaction/initialize",
@@ -106,7 +107,17 @@ async def verify_payment(data: PaymentConfirmation):
     if device_id not in mock_db["devices"]:
         raise HTTPException(status_code=404, detail="Device not found")
 
-    days_to_add = int(float(amount_paid) / 1000)
+    try:
+        amount_paid = int(float(amount_paid))
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="Invalid Amount Sent")
+
+    if amount_paid == 1000:
+        days_to_add = 1
+    elif amount_paid == 7000:
+        days_to_add = 7
+    else:
+        raise HTTPException(status_code=400, detail="Invalid Amount Sent")
 
     if days_to_add < 1:
         raise HTTPException(status_code=400, detail="Amount too low for power")
