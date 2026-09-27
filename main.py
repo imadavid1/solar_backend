@@ -1,9 +1,10 @@
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.orm import Session
 import random
 import os
+import re
 import requests
 from dotenv import load_dotenv
 from database import engine, Base, get_db
@@ -80,9 +81,19 @@ def get_current_user(
     return user
 app = FastAPI(title="Nigeria Solar PAYGO API")
 Base.metadata.create_all(bind=engine)
+
+allowed_origins = [
+    origin.strip()
+    for origin in os.getenv(
+        "ALLOWED_ORIGINS",
+        "https://imadavid1.github.io,http://localhost:5001,http://localhost:8080",
+    ).split(",")
+    if origin.strip()
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -92,17 +103,45 @@ class PaymentConfirmation(BaseModel):
 
 class CreatePaymentRequest(BaseModel):
     device_id: str
-    amount_paid: float
+    amount_paid: float = Field(gt=0)
 
 class UserCreate(BaseModel):
-    name: str
+    name: str = Field(min_length=2, max_length=100)
     email: str
-    password: str
-    role: str = "customer"
+    password: str = Field(min_length=8, max_length=128)
+
+    @field_validator("name")
+    @classmethod
+    def clean_name(cls, value: str):
+        return " ".join(value.strip().split())
+
+    @field_validator("email")
+    @classmethod
+    def validate_email(cls, value: str):
+        email = value.strip().lower()
+        if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email):
+            raise ValueError("Enter a valid email address")
+        return email
+
+    @field_validator("password")
+    @classmethod
+    def validate_password(cls, value: str):
+        if not re.search(r"[A-Z]", value):
+            raise ValueError("Password must contain an uppercase letter")
+        if not re.search(r"[a-z]", value):
+            raise ValueError("Password must contain a lowercase letter")
+        if not re.search(r"\d", value):
+            raise ValueError("Password must contain a number")
+        return value
 
 class LoginRequest(BaseModel):
     email: str
     password: str
+
+    @field_validator("email")
+    @classmethod
+    def normalise_email(cls, value: str):
+        return value.strip().lower()
 
 class DeviceCreate(BaseModel):
     device_code: str
@@ -210,6 +249,9 @@ def create_device(
 
     if not customer:
         raise HTTPException(status_code=404, detail="Customer not found")
+
+    if customer.role != "customer":
+        raise HTTPException(status_code=400, detail="Device owner must be a customer")
 
     existing_device = db.query(models.Device).filter(
         models.Device.device_code == device.device_code
@@ -568,7 +610,7 @@ def create_payment(
     }
 
     payload = {
-        "email": "customer@example.com",
+        "email": current_user.email,
         "amount": int(payment.amount_paid * 100),
         "currency": "NGN",
         "reference": reference,
@@ -641,10 +683,25 @@ async def verify_payment(
         )
 
     if payment_record.fulfilled:
-        raise HTTPException(
-            status_code=409,
-            detail="Payment already fulfilled"
-        )
+        existing_token = db.query(models.Token).filter(
+            models.Token.payment_id == payment_record.id
+        ).first()
+
+        if not existing_token:
+            raise HTTPException(
+                status_code=409,
+                detail="Payment was fulfilled but its token was not found"
+            )
+
+        return {
+            "status": "success",
+            "token": existing_token.token_value,
+            "days_added": existing_token.credit_days,
+            "message": (
+                "Payment was already verified. "
+                f"Enter this code on your solar device: {existing_token.token_value}"
+            ),
+        }
 
     headers = {
         "Authorization": f"Bearer {PAYSTACK_SECRET_KEY}",
@@ -858,8 +915,19 @@ def activation_report(
         "message": "Activation report recorded"
     }
 @app.get("/history")
-def get_history(db: Session = Depends(get_db)):
-    payments = db.query(models.Payment).order_by(
+def get_history(
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user)
+):
+    if current_user.role != "customer":
+        raise HTTPException(
+            status_code=403,
+            detail="Customer access required"
+        )
+
+    payments = db.query(models.Payment).filter(
+        models.Payment.customer_id == current_user.id
+    ).order_by(
         models.Payment.created_at.desc()
     ).all()
 
