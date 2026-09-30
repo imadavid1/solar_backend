@@ -614,7 +614,7 @@ def create_payment(
         "amount": int(payment.amount_paid * 100),
         "currency": "NGN",
         "reference": reference,
-        "callback_url": "https://imadavid1.github.io/solar_paygo_app/",
+        "callback_url": "http://localhost:5001/",
         "metadata": {
             "device_id": payment.device_id,
             "amount_paid": payment.amount_paid,
