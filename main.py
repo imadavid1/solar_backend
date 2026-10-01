@@ -94,6 +94,7 @@ allowed_origins = [
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
+    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -147,6 +148,9 @@ class DeviceCreate(BaseModel):
     device_code: str
     customer_id: int
     device_name: str = "Solar Device"
+class DeviceAssignment(BaseModel):
+    customer_id: int
+
 class TokenValidationRequest(BaseModel):
     device_id: str
     token: str
@@ -280,6 +284,50 @@ def create_device(
         "status": new_device.status,
         "remaining_credit": new_device.remaining_credit,
     }
+@app.patch("/provider/devices/{device_id}/assign")
+def assign_device(
+    device_id: int,
+    assignment: DeviceAssignment,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    if current_user.role != "provider":
+        raise HTTPException(
+            status_code=403,
+            detail="Provider access required",
+        )
+
+    device_record = db.query(models.Device).filter(
+        models.Device.id == device_id
+    ).first()
+
+    if not device_record:
+        raise HTTPException(
+            status_code=404,
+            detail="Device not found",
+        )
+
+    customer = db.query(models.User).filter(
+        models.User.id == assignment.customer_id,
+        models.User.role == "customer",
+    ).first()
+
+    if not customer:
+        raise HTTPException(
+            status_code=404,
+            detail="Customer not found",
+        )
+
+    device_record.customer_id = customer.id
+    db.commit()
+    db.refresh(device_record)
+
+    return {
+        "message": "Device assigned successfully",
+        "device_id": device_record.id,
+        "customer_id": customer.id,
+    }
+
 @app.get("/users/{user_id}/devices")
 def get_user_devices(
     user_id: int,
@@ -614,7 +662,7 @@ def create_payment(
         "amount": int(payment.amount_paid * 100),
         "currency": "NGN",
         "reference": reference,
-        "callback_url": "http://localhost:5001/",
+        "callback_url": "https://imadavid1.github.io/solar_paygo_app/",
         "metadata": {
             "device_id": payment.device_id,
             "amount_paid": payment.amount_paid,
