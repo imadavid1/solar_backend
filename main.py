@@ -171,7 +171,7 @@ def generate_token(device_secret: str, device_id: str, days: int, counter: int):
 
     mac = str(int(digest[:12], 16) % 100000000).zfill(8)
 
-    return f"{counter:04d}{days:02d}{mac}"
+    return f"{counter:04d}{days:02d}{mac}"   
 
 @app.get("/")
 def home():
@@ -806,6 +806,9 @@ async def verify_payment(
         days_to_add = 1
     elif amount_paid == 7000:
         days_to_add = 7
+    elif amount_paid == 30000:
+        days_to_add = 30
+        
     else:
         raise HTTPException(
             status_code=400,
